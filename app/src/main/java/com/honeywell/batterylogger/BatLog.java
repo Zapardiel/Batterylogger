@@ -1,16 +1,16 @@
 package com.honeywell.batterylogger;
 
-import android.Manifest;
 import android.app.Service;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
-import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.BatteryManager;
+import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
+import android.os.PowerManager;
 import android.util.Log;
 import android.widget.Toast;
 
@@ -30,6 +30,7 @@ public class BatLog extends Service {
     private static final int CHECK_BATTERY_INTERVAL = 60000;
     private double batteryLevel;
     private Handler handler;
+    PowerManager pm;
 
     // Gets system Intent ACTION_BATTERY_CHANGED
     private BroadcastReceiver batInfoReceiver = new BroadcastReceiver() {
@@ -44,7 +45,7 @@ public class BatLog extends Service {
             }
 
             Log.e("BatLog", batteryLevel + "%");
-            appendLog(String.format("%.00f", batteryLevel) + "%");
+            appendLog(": Bat=" + String.format("%.00f", batteryLevel) + "%");
         }
     };
 
@@ -80,7 +81,13 @@ public class BatLog extends Service {
             // schedule next battery check
             handler.postDelayed(checkBatteryStatusRunnable, CHECK_BATTERY_INTERVAL);
             Log.e("BatLog", batteryLevel + "% cached");
-            appendLog(String.format("%.00f", batteryLevel) + "% cached");
+            appendLog(": Bat=" + String.format("%.00f", batteryLevel) + "% cached");
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                pm = (PowerManager) BatLog.this.getSystemService(Context.POWER_SERVICE);
+                if (pm.isDeviceIdleMode()) appendLog("DOZE Mode!!");
+                Log.e("BatLog",": DOZE Mode!!");
+            }
         }
     };
 
@@ -146,7 +153,7 @@ public class BatLog extends Service {
         try {
             //BufferedWriter for performance, true to set append to file flag
             BufferedWriter buf = new BufferedWriter(new FileWriter(logFile, true));
-            buf.append(DateToStr + ": Bat=" + batLevel);
+            buf.append(DateToStr + batLevel);
             buf.newLine();
             buf.flush();
             buf.close();
