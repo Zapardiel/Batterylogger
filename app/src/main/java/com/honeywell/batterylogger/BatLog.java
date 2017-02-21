@@ -86,7 +86,7 @@ public class BatLog extends Service {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 pm = (PowerManager) BatLog.this.getSystemService(Context.POWER_SERVICE);
                 if (pm.isDeviceIdleMode()) appendLog(": DOZE Mode!!");
-                Log.e("BatLog",": DOZE Mode!!");
+                Log.e("BatLog","DOZE Mode!!");
             }
         }
     };
