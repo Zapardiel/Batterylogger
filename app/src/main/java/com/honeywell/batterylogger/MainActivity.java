@@ -13,6 +13,7 @@ import android.support.v4.app.ActivityCompat;
 import android.support.v4.content.ContextCompat;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
+import android.util.Log;
 import android.view.View;
 import android.widget.Toast;
 
@@ -75,7 +76,8 @@ public class MainActivity extends AppCompatActivity {
                     if (writeAccepted) {
                         Toast.makeText(this, "Running Service!", Toast.LENGTH_SHORT).show();
                         runService(MainActivity.this);
-                        return;
+                        finish();
+                        Log.e("BatLog", "Permissions Granted");
                     } else {
                         if (shouldShowRequestPermissionRationale(Manifest.permission.WRITE_EXTERNAL_STORAGE)) {
                             showMessageOKCancel("If you don't allow access to disk, the App won't work!. Press ALLOW",
@@ -93,8 +95,7 @@ public class MainActivity extends AppCompatActivity {
                                         }
                                     });
                             return;
-                        }
-                        else{                                                                                   // It was checked "Never Ask Again!"
+                        } else {                                                                                   // It was checked "Never Ask Again!"
                             Toast.makeText(MainActivity.this, "Sorry! Go to Apps->Permissions", Toast.LENGTH_SHORT).show();
                             finish();
                         }
