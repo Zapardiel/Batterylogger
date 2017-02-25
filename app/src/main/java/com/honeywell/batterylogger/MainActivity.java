@@ -3,13 +3,20 @@ package com.honeywell.batterylogger;
 import android.Manifest;
 import android.annotation.TargetApi;
 import android.app.AlertDialog;
+import android.app.Notification;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.os.Build;
 import android.os.Handler;
+import android.provider.MediaStore;
 import android.support.v4.app.ActivityCompat;
+import android.support.v4.app.NotificationCompat;
 import android.support.v4.content.ContextCompat;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
@@ -46,16 +53,24 @@ public class MainActivity extends AppCompatActivity {
 
     private void runService(Context context) {
         Intent serviceLauncher = new Intent(context, BatLog.class);
-        context.startService(serviceLauncher);
+        if (!BatLog.isInstanceCreated()) {
+            Log.e("BatLog","Service Running!!");
+            context.startService(serviceLauncher);
+            notifService();
+        } else {
+            Log.e("BatLog", "Service Stopped!!");
+            context.stopService(serviceLauncher);
+        }
     }
 
-   //region ANDROID 6, REQUEST PERMISSIONS
+    //region ANDROID 6, REQUEST PERMISSIONS
 
     // Checks that the Permission is not granted yet.
     private boolean checkPermission() {
         int result = ContextCompat.checkSelfPermission(getApplicationContext(), WRITE_EXTERNAL_STORAGE);
         return result == PackageManager.PERMISSION_GRANTED;
     }
+
     // askPermissions is launched just one time after onCreate, because it cannot be called on that method.
     private Runnable askPermissions = new Runnable() {
         @Override
@@ -112,6 +127,31 @@ public class MainActivity extends AppCompatActivity {
     }
 //endregion
 
+    //region NOTIFICATION
+    //Create Notification
+    private void notifService() {
+        Intent intent = getBaseContext().getPackageManager().getLaunchIntentForPackage(getBaseContext().getPackageName());
+        PendingIntent pendingIntent = PendingIntent.getActivity(MainActivity.this, 0, intent, 0);
+
+//        Bitmap bitmapIcon = BitmapFactory.decodeResource(getResources(), R.mipmap.ic_battery);
+        NotificationCompat.Builder mBuilder = new NotificationCompat.Builder(this)
+                .setSmallIcon(R.mipmap.ic_not)
+//                .setLargeIcon(bitmapIcon)
+                .setAutoCancel(true)
+                .setOngoing(true)
+                .setPriority(Notification.PRIORITY_LOW)
+                .setContentTitle("Battery Log")
+                .setTicker("The Service is Running!!")
+                .setContentText("The Service is Running!!")
+                .setContentIntent(pendingIntent);
+
+        Notification not = mBuilder.build();
+        NotificationManager notificationManager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        notificationManager.notify(1, not);
+    }
+    //endregion
+
+    //region UTILS
     //Show Dialog
     private void showMessageOKCancel(String message, DialogInterface.OnClickListener okListener, DialogInterface.OnClickListener koListener) {
         new AlertDialog.Builder(MainActivity.this)
@@ -121,6 +161,7 @@ public class MainActivity extends AppCompatActivity {
                 .create()
                 .show();
     }
+
     //Restart the App
     private void restartApp() {
         Intent i = getBaseContext().getPackageManager()
@@ -128,5 +169,6 @@ public class MainActivity extends AppCompatActivity {
         i.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
         startActivity(i);
     }
+    //endregion
 
 }

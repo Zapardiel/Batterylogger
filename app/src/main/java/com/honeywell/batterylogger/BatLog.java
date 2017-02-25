@@ -46,7 +46,9 @@ public class BatLog extends Service {
     private double batteryLevel;
     private boolean chkScanner = false;
     private boolean chkNet = false;
+    private boolean chkScanner_Exclusive = false;
 
+    // Handlers
     private Handler handler_scanner;
     private Handler handler_bat;
     private Handler handler_net;
@@ -57,6 +59,15 @@ public class BatLog extends Service {
     private static final String EXTRA_SCANNER = "com.honeywell.aidc.extra.EXTRA_SCANNER";
     private static final String EXTRA_PROFILE = "com.honeywell.aidc.extra.EXTRA_PROFILE";
     private static final String EXTRA_PROPERTIES = "com.honeywell.aidc.extra.EXTRA_PROPERTIES";
+
+    //region SERVICE STATUS
+    // Knows Service Lifecycle
+    private static BatLog instance = null;
+
+    public static boolean isInstanceCreated() {
+        return instance != null;
+    }
+    //endregion
 
     //region BROADCAST RECEIVER
     // Gets system Intent ACTION_BATTERY_CHANGED
@@ -101,92 +112,130 @@ public class BatLog extends Service {
         public void onReceive(Context context, Intent intent) {
             if (ACTION_BARCODE_DATA.equals(intent.getAction())) {
                 SimulateScanKey(false);         // Release Scanner Buttons
-                Log.e("BatLog", "Barcode Read");
+                appendLog(": Barcode Read");
 
                 // schedule next scanner check
-                handler_scanner.postDelayed(runScannerRunnable, CHECK_SCANNER_INTERVAL);
-                Log.e("BatLog", "Waiting runScanner...");
+                handler_scanner.postDelayed(runScannerRunnable_ON, CHECK_SCANNER_INTERVAL);
             }
         }
     };
     //endregion
 
     //region RUNNABLES
-    private Runnable checkBatteryStatusRunnable = new Runnable() {
+    private Runnable runBatteryStatusRunnable = new Runnable() {
         @Override
         public void run() {
             // Schedule next battery check
-            handler_bat.postDelayed(checkBatteryStatusRunnable, CHECK_BAT_INTERVAL);
+            handler_bat.postDelayed(runBatteryStatusRunnable, CHECK_BAT_INTERVAL);
             appendLog(": Bat=" + String.format("%.00f", batteryLevel) + "% cached");
         }
     };
 
-    private Runnable runScannerRunnable = new Runnable() {
+    private Runnable runScannerRunnable_ON = new Runnable() {
         @Override
         public void run() {
             // Scanner trigger
             SimulateScanKey(true);
+
+            // Turns OFF the scanner after 1sec
+            handler_scanner.postDelayed(runScannerRunnable_OFF, 1000);
         }
     };
 
-    private Runnable chkNetRunnable = new Runnable() {
+    private Runnable runScannerRunnable_OFF = new Runnable() {
+        @Override
+        public void run() {
+            // scanner trigger release
+            SimulateScanKey(false);
+
+            // schedule next scanner check
+            handler_scanner.postDelayed(runScannerRunnable_ON, CHECK_SCANNER_INTERVAL);
+        }
+    };
+
+    private Runnable runNetRunnable = new Runnable() {
         @Override
         public void run() {
             // Do network check
             appendLog(": Ping: " + parsePingResults(ping(inet_add)));
-            handler_net.postDelayed(chkNetRunnable, CHECK_NET_INTERVAL);
+            handler_net.postDelayed(runNetRunnable, CHECK_NET_INTERVAL);
         }
     };
     //endregion
 
     @Override
     public void onCreate() {
+        // Flag to know that the service is running
+        instance = this;
 
         // Loads settings from Ini File
         try {
             iniFile ini = new iniFile("/sdcard/BatLog.ini");
             CHECK_BAT_INTERVAL = ini.getInt("DEFAULT", "BAT_INTERVAL", 60000);
-            CHECK_SCANNER_INTERVAL = ini.getInt("DEFAULT", "SCANNER_INTERVAL", 1000);
-            chkScanner = ini.getBoolean("DEFAULT", "SCANNER_CHECK", false);
-            CHECK_NET_INTERVAL = ini.getInt("DEFALT", "NET_INTERVAL", 1000);
-            chkNet = ini.getBoolean("DEFAULT", "NET_CHECK", false);
-            inet_add = ini.getString("DEFAULT", "NET_ADD", "www.yahoo.es");
+
+            chkScanner = ini.getBoolean("SCANNER", "SCANNER_ENABLED", false);
+            CHECK_SCANNER_INTERVAL = ini.getInt("SCANNER", "SCANNER_INTERVAL", 1000);
+            chkScanner_Exclusive = ini.getBoolean("SCANNER", "SCANNER_EXCLUSIVE", false);
+
+            chkNet = ini.getBoolean("NETWORK", "NET_ENABLED", false);
+            CHECK_NET_INTERVAL = ini.getInt("NETWORK", "NET_INTERVAL", 1000);
+            inet_add = ini.getString("NETWORK", "NET_ADD", "www.yahoo.es");
 
         } catch (IOException ex) {
             Log.e("BatLog", "Ini File does not exists");
             appendLog("Ini File does not exists");
         }
 
-        // Scanner
+        // Scanner Handler
         if (chkScanner) {
             handler_scanner = new Handler();
-            handler_scanner.postDelayed(runScannerRunnable, CHECK_SCANNER_INTERVAL);
+            handler_scanner.postDelayed(runScannerRunnable_ON, CHECK_SCANNER_INTERVAL);
             registerReceiver(barcodeDataReceiver, new IntentFilter(ACTION_BARCODE_DATA));
-            claimScanner();
         }
 
-        // Ping
+        // Ping Handler
         if (chkNet) {
             appendLog(": Ping: " + parsePingResults(ping(inet_add)));
             handler_net = new Handler();
-            handler_net.postDelayed(chkNetRunnable, CHECK_NET_INTERVAL);
+            handler_net.postDelayed(runNetRunnable, CHECK_NET_INTERVAL);
         }
 
-        // Battery
+        // Battery Handler
         handler_bat = new Handler();
-        handler_bat.postDelayed(checkBatteryStatusRunnable, CHECK_BAT_INTERVAL);
+        handler_bat.postDelayed(runBatteryStatusRunnable, CHECK_BAT_INTERVAL);
         registerReceiver(batInfoReceiver, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
 
         // USB detection
         registerReceiver(usbReceiver, new IntentFilter("android.hardware.usb.action.USB_STATE"));
+
+        // Claims scanner service if it's requested
+        if (chkScanner_Exclusive) claimScanner();
     }
 
     @Override
     public void onDestroy() {
-        unregisterReceiver(batInfoReceiver);
-        handler_bat.removeCallbacks(checkBatteryStatusRunnable);
-        handler_scanner.removeCallbacks(checkBatteryStatusRunnable);
-        releaseScanner();
+        // flag to quote service status
+        instance = null;
+
+        // unregister Broadcast Receivers
+        try {
+            unregisterReceiver(batInfoReceiver);
+            unregisterReceiver(usbReceiver);
+            unregisterReceiver(barcodeDataReceiver);
+        } catch (Exception ex) {
+            Log.e("BatLog", "Exception Destroying Service (Unregistering Broadcasts): " + ex.getMessage());
+        }
+        // removeCallBacks
+        try {
+            handler_bat.removeCallbacks(runBatteryStatusRunnable);
+            handler_scanner.removeCallbacks(runScannerRunnable_ON);
+            handler_scanner.removeCallbacks(runScannerRunnable_OFF);
+            handler_net.removeCallbacks(runNetRunnable);
+        } catch (Exception ex) {
+            Log.e("BatLog", "Exception Destroying Service (Removing Handlers): " + ex.getMessage());
+        }
+        // release scanner
+        if (chkScanner_Exclusive) releaseScanner();
     }
 
     @Override
@@ -271,14 +320,18 @@ public class BatLog extends Service {
     }
 
     private String parsePingResults(String pingResults) {
-        if (pingResults.indexOf("unknown")<0) {
+        try {
             int ptime = pingResults.indexOf("time=");
             int pmill = pingResults.indexOf("ms");
-            return pingResults.substring(ptime,pmill+2);
-        }else {
-            return "No Answer from Host";
+            if ((pingResults.indexOf("unknown") >= 0) || ((pmill > ptime) && (ptime > 0) && (pmill > 0))) {
+                return pingResults.substring(ptime, pmill + 2);
+            } else {
+                return "No Answer from Host";
+            }
+        } catch (Exception ex) {
+            appendLog(": Exception parsing Ping Statistics");
         }
-
+        return "No Answer from Host";
     }
     //endregion
 
