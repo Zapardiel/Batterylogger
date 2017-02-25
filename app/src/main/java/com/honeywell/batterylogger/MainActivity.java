@@ -49,6 +49,14 @@ public class MainActivity extends AppCompatActivity {
         context.startService(serviceLauncher);
     }
 
+   //region ANDROID 6, REQUEST PERMISSIONS
+
+    // Checks that the Permission is not granted yet.
+    private boolean checkPermission() {
+        int result = ContextCompat.checkSelfPermission(getApplicationContext(), WRITE_EXTERNAL_STORAGE);
+        return result == PackageManager.PERMISSION_GRANTED;
+    }
+    // askPermissions is launched just one time after onCreate, because it cannot be called on that method.
     private Runnable askPermissions = new Runnable() {
         @Override
         public void run() {
@@ -56,15 +64,12 @@ public class MainActivity extends AppCompatActivity {
         }
     };
 
-    private boolean checkPermission() {
-        int result = ContextCompat.checkSelfPermission(getApplicationContext(), WRITE_EXTERNAL_STORAGE);
-        return result == PackageManager.PERMISSION_GRANTED;
-    }
-
+    // Ask for Permission REQUEST_WRITE_STORAGE
     private void requestPermission() {
         ActivityCompat.requestPermissions(MainActivity.this, new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE}, REQUEST_WRITE_STORAGE);
     }
 
+    // Callback that is called when the user clicks on Deny or Allow
     @TargetApi(Build.VERSION_CODES.M)
     public void onRequestPermissionsResult(int requestCode, String permissions[], int[] grantResults) {
         switch (requestCode) {
@@ -74,12 +79,12 @@ public class MainActivity extends AppCompatActivity {
                     boolean writeAccepted = grantResults[0] == PackageManager.PERMISSION_GRANTED;
 
                     if (writeAccepted) {
-                        Toast.makeText(this, "Running Service!", Toast.LENGTH_SHORT).show();
                         runService(MainActivity.this);
                         finish();
                         Log.e("BatLog", "Permissions Granted");
                     } else {
                         if (shouldShowRequestPermissionRationale(Manifest.permission.WRITE_EXTERNAL_STORAGE)) {
+                            // Is it just Denied but not checked "Never Ask Again"?  --> Ask again
                             showMessageOKCancel("If you don't allow access to disk, the App won't work!. Press ALLOW",
                                     new DialogInterface.OnClickListener() {
                                         @Override
@@ -95,7 +100,8 @@ public class MainActivity extends AppCompatActivity {
                                         }
                                     });
                             return;
-                        } else {                                                                                   // It was checked "Never Ask Again!"
+                        } else {
+                            // It was checked "Never Ask Again!"
                             Toast.makeText(MainActivity.this, "Sorry! Go to Apps->Permissions", Toast.LENGTH_SHORT).show();
                             finish();
                         }
@@ -104,8 +110,9 @@ public class MainActivity extends AppCompatActivity {
                 break;
         }
     }
+//endregion
 
-
+    //Show Dialog
     private void showMessageOKCancel(String message, DialogInterface.OnClickListener okListener, DialogInterface.OnClickListener koListener) {
         new AlertDialog.Builder(MainActivity.this)
                 .setMessage(message)
@@ -114,7 +121,7 @@ public class MainActivity extends AppCompatActivity {
                 .create()
                 .show();
     }
-
+    //Restart the App
     private void restartApp() {
         Intent i = getBaseContext().getPackageManager()
                 .getLaunchIntentForPackage(getBaseContext().getPackageName());

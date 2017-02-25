@@ -1,0 +1,19 @@
+//            Checks DOZE Mode. **NoT WoRkInG**
+//            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+//                pm = (PowerManager) BatLog.this.getSystemService(Context.POWER_SERVICE);
+//                if (pm.isDeviceIdleMode()) appendLog(": DOZE Mode!!");
+//                Log.e("BatLog","DOZE Mode!!");
+//            }
+
+// NOT USED METHODS
+    private String bytesToHexString(byte[] arr) {
+        String s = "[]";
+        if (arr != null) {
+            s = "[";
+            for (int i = 0; i < arr.length; i++) {
+                s += "0x" + Integer.toHexString(arr[i]) + ", ";
+            }
+            s = s.substring(0, s.length() - 2) + "]";
+        }
+        return s;
+    }

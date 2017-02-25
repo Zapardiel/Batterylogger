@@ -16,25 +16,40 @@ import android.util.Log;
 import android.view.KeyEvent;
 import android.widget.Toast;
 
+import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.text.SimpleDateFormat;
 import java.util.Calendar;
 import java.util.Date;
+import java.util.regex.Pattern;
+import java.util.regex.Matcher;
 
 /**
  * Created by E438447 on 2/8/2017.
  */
 public class BatLog extends Service {
 
-    private static final int CHECK_BAT_INTERVAL = 60000;
-    private static final int CHECK_SCANNER_INTERVAL = 10000;
+    // int Values
+    private int CHECK_BAT_INTERVAL = 60000;
+    private int CHECK_SCANNER_INTERVAL = 10000;
+    private int CHECK_NET_INTERVAL = 10000;
+
+    // String Values
+    private String inet_add = "www.yahoo.es";
+
+    // Flags
+    PowerManager pm;
     private double batteryLevel;
+    private boolean chkScanner = false;
+    private boolean chkNet = false;
+
     private Handler handler_scanner;
     private Handler handler_bat;
-    PowerManager pm;
+    private Handler handler_net;
 
     private static final String ACTION_BARCODE_DATA = "com.honeywell.sample.action.BARCODE_DATA";
     private static final String ACTION_CLAIM_SCANNER = "com.honeywell.aidc.action.ACTION_CLAIM_SCANNER";
@@ -43,6 +58,7 @@ public class BatLog extends Service {
     private static final String EXTRA_PROFILE = "com.honeywell.aidc.extra.EXTRA_PROFILE";
     private static final String EXTRA_PROPERTIES = "com.honeywell.aidc.extra.EXTRA_PROPERTIES";
 
+    //region BROADCAST RECEIVER
     // Gets system Intent ACTION_BATTERY_CHANGED
     private BroadcastReceiver batInfoReceiver = new BroadcastReceiver() {
 
@@ -62,10 +78,8 @@ public class BatLog extends Service {
 
     // Gets system Intent android.hardware.usb.action.USB_STATE
     private BroadcastReceiver usbReceiver = new BroadcastReceiver() {
-
         @Override
         public void onReceive(Context context, Intent usbIntent) {
-
             try {
                 boolean bConnected = usbIntent.getExtras().getBoolean("connected");
                 if (bConnected) {
@@ -91,89 +105,81 @@ public class BatLog extends Service {
 
                 // schedule next scanner check
                 handler_scanner.postDelayed(runScannerRunnable, CHECK_SCANNER_INTERVAL);
-
-                Log.e("BatLog","Waiting runScanner...");
+                Log.e("BatLog", "Waiting runScanner...");
             }
         }
     };
+    //endregion
 
+    //region RUNNABLES
     private Runnable checkBatteryStatusRunnable = new Runnable() {
         @Override
         public void run() {
-            // DO WHATEVER YOU WANT, EVERY "CHECK_BAT_INTERVAL"
-
-            // schedule next battery check
+            // Schedule next battery check
             handler_bat.postDelayed(checkBatteryStatusRunnable, CHECK_BAT_INTERVAL);
-            Log.e("BatLog", batteryLevel + "% cached");
             appendLog(": Bat=" + String.format("%.00f", batteryLevel) + "% cached");
-
-            // Checks DOZE Mode. **NoT WoRkInG**
-//            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-//                pm = (PowerManager) BatLog.this.getSystemService(Context.POWER_SERVICE);
-//                if (pm.isDeviceIdleMode()) appendLog(": DOZE Mode!!");
-//                Log.e("BatLog","DOZE Mode!!");
-//            }
         }
     };
 
     private Runnable runScannerRunnable = new Runnable() {
         @Override
         public void run() {
-            // DO WHATEVER YOU WANT, EVERY "CHECK_SCANNER_INTERVAL"
-            Log.e("BatLog","Runnable for Scanner");
+            // Scanner trigger
             SimulateScanKey(true);
         }
     };
 
-    void SimulateScanKey(boolean KeyDown) {
-        KeyEvent SendKeyEvent;
-        Intent sendIntentDown = new Intent("com.honeywell.intent.action.SCAN_BUTTON");
-        if (KeyDown) {
-            SendKeyEvent = new KeyEvent(0, 0);
-
-        } else {
-            SendKeyEvent = new KeyEvent(1, 0);
+    private Runnable chkNetRunnable = new Runnable() {
+        @Override
+        public void run() {
+            // Do network check
+            appendLog(": Ping: " + parsePingResults(ping(inet_add)));
+            handler_net.postDelayed(chkNetRunnable, CHECK_NET_INTERVAL);
         }
-        sendIntentDown.putExtra("android.intent.extra.KEY_EVENT", SendKeyEvent);
-        this.sendBroadcast(sendIntentDown);
-    }
-
-    private void claimScanner() {
-        Bundle properties = new Bundle();
-        properties.putBoolean("DPR_DATA_INTENT", true);
-        properties.putString("DPR_DATA_INTENT_ACTION", ACTION_BARCODE_DATA);
-        sendBroadcast(new Intent(ACTION_CLAIM_SCANNER)
-                        .putExtra(EXTRA_SCANNER, "dcs.scanner.imager")
-                        .putExtra(EXTRA_PROFILE, "Default")
-                        .putExtra(EXTRA_PROPERTIES, properties)
-        );
-        Log.e("BatLog", "Scanner Claimed");
-    }
-    private void releaseScanner() {
-        sendBroadcast(new Intent(ACTION_RELEASE_SCANNER));
-        Log.e("BatLog","Released Scanner");
-    }
+    };
+    //endregion
 
     @Override
     public void onCreate() {
+
+        // Loads settings from Ini File
+        try {
+            iniFile ini = new iniFile("/sdcard/BatLog.ini");
+            CHECK_BAT_INTERVAL = ini.getInt("DEFAULT", "BAT_INTERVAL", 60000);
+            CHECK_SCANNER_INTERVAL = ini.getInt("DEFAULT", "SCANNER_INTERVAL", 1000);
+            chkScanner = ini.getBoolean("DEFAULT", "SCANNER_CHECK", false);
+            CHECK_NET_INTERVAL = ini.getInt("DEFALT", "NET_INTERVAL", 1000);
+            chkNet = ini.getBoolean("DEFAULT", "NET_CHECK", false);
+            inet_add = ini.getString("DEFAULT", "NET_ADD", "www.yahoo.es");
+
+        } catch (IOException ex) {
+            Log.e("BatLog", "Ini File does not exists");
+            appendLog("Ini File does not exists");
+        }
+
+        // Scanner
+        if (chkScanner) {
+            handler_scanner = new Handler();
+            handler_scanner.postDelayed(runScannerRunnable, CHECK_SCANNER_INTERVAL);
+            registerReceiver(barcodeDataReceiver, new IntentFilter(ACTION_BARCODE_DATA));
+            claimScanner();
+        }
+
+        // Ping
+        if (chkNet) {
+            appendLog(": Ping: " + parsePingResults(ping(inet_add)));
+            handler_net = new Handler();
+            handler_net.postDelayed(chkNetRunnable, CHECK_NET_INTERVAL);
+        }
+
+        // Battery
         handler_bat = new Handler();
-        handler_scanner = new Handler();
         handler_bat.postDelayed(checkBatteryStatusRunnable, CHECK_BAT_INTERVAL);
-        handler_scanner.postDelayed(runScannerRunnable, CHECK_SCANNER_INTERVAL);
+        registerReceiver(batInfoReceiver, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
 
-        registerReceiver(batInfoReceiver,
-                new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
-
-        registerReceiver(usbReceiver,
-                new IntentFilter("android.hardware.usb.action.USB_STATE"));
-
-        registerReceiver(barcodeDataReceiver, new IntentFilter(ACTION_BARCODE_DATA));
-
-        claimScanner();
+        // USB detection
+        registerReceiver(usbReceiver, new IntentFilter("android.hardware.usb.action.USB_STATE"));
     }
-
-
-
 
     @Override
     public void onDestroy() {
@@ -193,19 +199,7 @@ public class BatLog extends Service {
         return START_STICKY;
     }
 
-    private String bytesToHexString(byte[] arr) {
-        String s = "[]";
-        if (arr != null) {
-            s = "[";
-            for (int i = 0; i < arr.length; i++) {
-                s += "0x" + Integer.toHexString(arr[i]) + ", ";
-            }
-            s = s.substring(0, s.length() - 2) + "]";
-        }
-        return s;
-    }
-
-
+    //region LOG FILES
     public void appendLog(String batLevel) {
         Date curDate = new Date();
         SimpleDateFormat format = new SimpleDateFormat("yyyy/MM/dd hh:mm:ss");
@@ -226,6 +220,7 @@ public class BatLog extends Service {
                     logFile.createNewFile();
                 } catch (IOException ex) {
                     ex.printStackTrace();
+                    Toast.makeText(BatLog.this, "Impossible to write a LOG File!!", Toast.LENGTH_LONG).show();
                 }
             }
         } else {
@@ -233,6 +228,7 @@ public class BatLog extends Service {
                 logFile.createNewFile();
             } catch (IOException ex) {
                 ex.printStackTrace();
+                Toast.makeText(BatLog.this, "Impossible to write a LOG File!!", Toast.LENGTH_LONG).show();
             }
         }
 
@@ -247,4 +243,74 @@ public class BatLog extends Service {
             ex.printStackTrace();
         }
     }
+    //endregion
+
+    //region PING
+    public String ping(String url) {
+        String str = "";
+        try {
+            Process process = Runtime.getRuntime().exec(
+                    "/system/bin/ping -c 1 " + url);
+            BufferedReader reader = new BufferedReader(new InputStreamReader(
+                    process.getInputStream()));
+            int i;
+            char[] buffer = new char[4096];
+            StringBuffer output = new StringBuffer();
+            while ((i = reader.read(buffer)) > 0)
+                output.append(buffer, 0, i);
+            reader.close();
+
+            // body.append(output.toString()+"\n");
+            str = output.toString();
+            // Log.d(TAG, str);
+        } catch (IOException e) {
+            // body.append("Error\n");
+            e.printStackTrace();
+        }
+        return str;
+    }
+
+    private String parsePingResults(String pingResults) {
+        if (pingResults.indexOf("unknown")<0) {
+            int ptime = pingResults.indexOf("time=");
+            int pmill = pingResults.indexOf("ms");
+            return pingResults.substring(ptime,pmill+2);
+        }else {
+            return "No Answer from Host";
+        }
+
+    }
+    //endregion
+
+    //region SCANNER
+    private void claimScanner() {
+        Bundle properties = new Bundle();
+        properties.putBoolean("DPR_DATA_INTENT", true);
+        properties.putString("DPR_DATA_INTENT_ACTION", ACTION_BARCODE_DATA);
+        sendBroadcast(new Intent(ACTION_CLAIM_SCANNER)
+                        .putExtra(EXTRA_SCANNER, "dcs.scanner.imager")
+                        .putExtra(EXTRA_PROFILE, "Default")
+                        .putExtra(EXTRA_PROPERTIES, properties)
+        );
+        Log.e("BatLog", "Scanner Claimed");
+    }
+
+    private void releaseScanner() {
+        sendBroadcast(new Intent(ACTION_RELEASE_SCANNER));
+        Log.e("BatLog", "Released Scanner");
+    }
+
+    void SimulateScanKey(boolean KeyDown) {
+        KeyEvent SendKeyEvent;
+        Intent sendIntentDown = new Intent("com.honeywell.intent.action.SCAN_BUTTON");
+        if (KeyDown) {
+            SendKeyEvent = new KeyEvent(0, 0);
+
+        } else {
+            SendKeyEvent = new KeyEvent(1, 0);
+        }
+        sendIntentDown.putExtra("android.intent.extra.KEY_EVENT", SendKeyEvent);
+        this.sendBroadcast(sendIntentDown);
+    }
+    //endregion
 }
