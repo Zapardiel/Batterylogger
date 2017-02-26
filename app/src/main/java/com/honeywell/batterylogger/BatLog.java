@@ -77,13 +77,21 @@ public class BatLog extends Service {
         public void onReceive(Context context, Intent batteryIntent) {
             int rawlevel = batteryIntent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
             int scale = batteryIntent.getIntExtra(BatteryManager.EXTRA_SCALE, -1);
+            int status = batteryIntent.getIntExtra(BatteryManager.EXTRA_STATUS, -1);
+            boolean isCharging = status == BatteryManager.BATTERY_STATUS_CHARGING ||
+                    status == BatteryManager.BATTERY_STATUS_FULL;
+
+            int chargePlug = batteryIntent.getIntExtra(BatteryManager.EXTRA_PLUGGED, -1);
+            boolean usbCharge = chargePlug == BatteryManager.BATTERY_PLUGGED_USB;
+            boolean acCharge = chargePlug == BatteryManager.BATTERY_PLUGGED_AC;
 
             if (rawlevel >= 0 && scale > 0) {
                 batteryLevel = (rawlevel * 100) / scale;
             }
 
-            Log.e("BatLog", batteryLevel + "%");
-            appendLog("Bat=" + String.format("%.00f", batteryLevel) + "%");
+            String batStatus=isCharging?(acCharge?"Charging AC":"Charging Usb"):"Discharging";
+            Log.e("BatLog", batteryLevel + "%, " + batStatus);
+            appendLog("Bat=" + String.format("%.00f", batteryLevel) + "%, " + batStatus);
         }
     };
 
@@ -92,15 +100,21 @@ public class BatLog extends Service {
         @Override
         public void onReceive(Context context, Intent usbIntent) {
             try {
+                Date curDate = new Date();
+                SimpleDateFormat format_date = new SimpleDateFormat("yyyyMMdd");
+
                 boolean bConnected = usbIntent.getExtras().getBoolean("connected");
                 if (bConnected) {
-                    File logFile = new File("sdcard/BatLog.txt");
+                    appendLog("USB Cable Plugged");
+                    File logFile = new File("sdcard","BatLog_" + format_date.format(curDate) + ".txt");
                     Uri uri = Uri.fromFile(logFile);
                     Intent scanFileIntent = new Intent(
                             Intent.ACTION_MEDIA_SCANNER_SCAN_FILE, uri);
                     sendBroadcast(scanFileIntent);
+                }else{
+                    appendLog("USB Cable Unplugged");
                 }
-                Log.e("BatLog", "USB Connected");
+
             } catch (Exception ex) {
                 ex.printStackTrace();
             }
@@ -163,6 +177,7 @@ public class BatLog extends Service {
     };
     //endregion
 
+    //region Overidable Methods
     @Override
     public void onCreate() {
         // Flag to know that the service is running
@@ -204,6 +219,8 @@ public class BatLog extends Service {
         handler_bat = new Handler();
         handler_bat.postDelayed(runBatteryStatusRunnable, CHECK_BAT_INTERVAL);
         registerReceiver(batInfoReceiver, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
+        registerReceiver(batInfoReceiver, new IntentFilter(Intent.ACTION_POWER_CONNECTED));
+        registerReceiver(batInfoReceiver, new IntentFilter(Intent.ACTION_POWER_DISCONNECTED));
 
         // USB detection
         registerReceiver(usbReceiver, new IntentFilter("android.hardware.usb.action.USB_STATE"));
@@ -248,6 +265,8 @@ public class BatLog extends Service {
     public int onStartCommand(Intent intent, int flags, int startId) {
         return START_STICKY;
     }
+
+    //endregion
 
     //region LOG FILES
     public void appendLog(String info) {
