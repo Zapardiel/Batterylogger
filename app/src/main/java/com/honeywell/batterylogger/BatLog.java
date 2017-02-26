@@ -7,7 +7,6 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.net.Uri;
 import android.os.BatteryManager;
-import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
@@ -20,13 +19,14 @@ import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileWriter;
+import java.io.FilenameFilter;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.text.SimpleDateFormat;
+import java.util.Arrays;
 import java.util.Calendar;
 import java.util.Date;
-import java.util.regex.Pattern;
-import java.util.regex.Matcher;
+
 
 /**
  * Created by E438447 on 2/8/2017.
@@ -83,7 +83,7 @@ public class BatLog extends Service {
             }
 
             Log.e("BatLog", batteryLevel + "%");
-            appendLog(": Bat=" + String.format("%.00f", batteryLevel) + "%");
+            appendLog("Bat=" + String.format("%.00f", batteryLevel) + "%");
         }
     };
 
@@ -112,7 +112,7 @@ public class BatLog extends Service {
         public void onReceive(Context context, Intent intent) {
             if (ACTION_BARCODE_DATA.equals(intent.getAction())) {
                 SimulateScanKey(false);         // Release Scanner Buttons
-                appendLog(": Barcode Read");
+                appendLog("Barcode Read: " + intent.getStringExtra("data"));
 
                 // schedule next scanner check
                 handler_scanner.postDelayed(runScannerRunnable_ON, CHECK_SCANNER_INTERVAL);
@@ -127,7 +127,7 @@ public class BatLog extends Service {
         public void run() {
             // Schedule next battery check
             handler_bat.postDelayed(runBatteryStatusRunnable, CHECK_BAT_INTERVAL);
-            appendLog(": Bat=" + String.format("%.00f", batteryLevel) + "% cached");
+            appendLog("Bat=" + String.format("%.00f", batteryLevel) + "% cached");
         }
     };
 
@@ -157,7 +157,7 @@ public class BatLog extends Service {
         @Override
         public void run() {
             // Do network check
-            appendLog(": Ping: " + parsePingResults(ping(inet_add)));
+            appendLog("Ping: " + parsePingResults(ping(inet_add)));
             handler_net.postDelayed(runNetRunnable, CHECK_NET_INTERVAL);
         }
     };
@@ -179,7 +179,7 @@ public class BatLog extends Service {
 
             chkNet = ini.getBoolean("NETWORK", "NET_ENABLED", false);
             CHECK_NET_INTERVAL = ini.getInt("NETWORK", "NET_INTERVAL", 1000);
-            inet_add = ini.getString("NETWORK", "NET_ADD", "www.yahoo.es");
+            inet_add = ini.getString("NETWORK", "NET_ADDR", "www.yahoo.es");
 
         } catch (IOException ex) {
             Log.e("BatLog", "Ini File does not exists");
@@ -195,7 +195,7 @@ public class BatLog extends Service {
 
         // Ping Handler
         if (chkNet) {
-            appendLog(": Ping: " + parsePingResults(ping(inet_add)));
+            appendLog("Ping: " + parsePingResults(ping(inet_add)));
             handler_net = new Handler();
             handler_net.postDelayed(runNetRunnable, CHECK_NET_INTERVAL);
         }
@@ -235,6 +235,7 @@ public class BatLog extends Service {
             Log.e("BatLog", "Exception Destroying Service (Removing Handlers): " + ex.getMessage());
         }
         // release scanner
+        SimulateScanKey(false);
         if (chkScanner_Exclusive) releaseScanner();
     }
 
@@ -249,30 +250,18 @@ public class BatLog extends Service {
     }
 
     //region LOG FILES
-    public void appendLog(String batLevel) {
+    public void appendLog(String info) {
         Date curDate = new Date();
-        SimpleDateFormat format = new SimpleDateFormat("yyyy/MM/dd hh:mm:ss");
-        String DateToStr = format.format(curDate);
-        File logFile = new File("sdcard/BatLog.txt");
+        SimpleDateFormat format_date = new SimpleDateFormat("yyyyMMdd");
+        SimpleDateFormat format_hour = new SimpleDateFormat("hh:mm:ss");
+        String DateToStr = format_hour.format(curDate);
+        File logFile = new File("sdcard","BatLog_" + format_date.format(curDate) + ".txt");
 
-        if (logFile.exists()) {
-            Calendar time = Calendar.getInstance();
-            time.add(Calendar.DAY_OF_YEAR, -1);
+        if (!logFile.exists()) {
+            // delete old files BatLog_xxx.txt
+            deleteOldFiles(5);
 
-            //I store the required attributes here and delete them
-            Date lastModified = new Date(logFile.lastModified());
-            if (lastModified.before(time.getTime())) {
-                //file is older than a week
-                File to = new File("sdcard", "BatLog_" + format.format(lastModified) + ".txt");
-                logFile.renameTo(to);
-                try {
-                    logFile.createNewFile();
-                } catch (IOException ex) {
-                    ex.printStackTrace();
-                    Toast.makeText(BatLog.this, "Impossible to write a LOG File!!", Toast.LENGTH_LONG).show();
-                }
-            }
-        } else {
+            // create a new file BatLog_yyyyMMdd.txt
             try {
                 logFile.createNewFile();
             } catch (IOException ex) {
@@ -284,7 +273,7 @@ public class BatLog extends Service {
         try {
             //BufferedWriter for performance, true to set append to file flag
             BufferedWriter buf = new BufferedWriter(new FileWriter(logFile, true));
-            buf.append(DateToStr + batLevel);
+            buf.append(DateToStr + ": " + info);
             buf.newLine();
             buf.flush();
             buf.close();
@@ -292,6 +281,47 @@ public class BatLog extends Service {
             ex.printStackTrace();
         }
     }
+
+    class Pair implements Comparable {
+        public long t;
+        public File f;
+
+        public Pair(File file) {
+            f = file;
+            t = file.lastModified();
+        }
+
+        public int compareTo(Object o) {
+            long u = ((Pair) o).t;
+            return t < u ? -1 : t == u ? 0 : 1;
+        }
+    };
+
+    private void deleteOldFiles(int maxFiles)
+    {
+        File dir = new File("sdcard");
+        File[] files = dir.listFiles(new FilenameFilter() {
+            @Override
+            public boolean accept(File dir, String name) {
+                return name.matches("BatLog_(.*).txt");
+            }
+        });
+
+        Pair[] pairs = new Pair[files.length];
+        for (int i = 0; i < files.length; i++)
+            pairs[i] = new Pair(files[i]);
+
+        // Sort them by timestamp.
+        Arrays.sort(pairs);
+
+        // Take the sorted pairs and extract only the file part, discarding the timestamp.
+        if (files.length>maxFiles) {
+            for ( int i = 0; i < files.length - maxFiles; i++) {
+                pairs[i].f.delete();
+            }
+        }
+    }
+
     //endregion
 
     //region PING
@@ -312,9 +342,8 @@ public class BatLog extends Service {
             // body.append(output.toString()+"\n");
             str = output.toString();
             // Log.d(TAG, str);
-        } catch (IOException e) {
-            // body.append("Error\n");
-            e.printStackTrace();
+        } catch (Exception e) {
+            appendLog("Exception: " + e.getMessage());
         }
         return str;
     }
@@ -329,7 +358,7 @@ public class BatLog extends Service {
                 return "No Answer from Host";
             }
         } catch (Exception ex) {
-            appendLog(": Exception parsing Ping Statistics");
+            appendLog("Exception parsing Ping Statistics");
         }
         return "No Answer from Host";
     }
